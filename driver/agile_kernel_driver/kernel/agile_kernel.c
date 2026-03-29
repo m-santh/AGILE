@@ -1,3 +1,4 @@
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/slab.h>         
 #include <linux/fs.h>           
@@ -13,6 +14,7 @@
 #include <linux/atomic.h>
 #include <linux/spinlock.h>
 #include <linux/ktime.h>
+#include <linux/vmalloc.h>
 
 #include "../common/agile_kernel_driver.h"
 #include "../common/agile_dma_cmd.h"
@@ -189,6 +191,17 @@ static int fp_release(struct inode *inodep, struct file *filep) {
     return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,3,0)
+/**
+ * This API requires Linux kernel 6.3.
+ * See https://github.com/torvalds/linux/commit/bc292ab00f6c7a661a8a605c714e8a148f629ef6
+ */
+static inline void vm_flags_set(struct vm_area_struct *vma, vm_flags_t flags)
+{
+    vma->vm_flags |= flags;
+}
+#endif
+
 static int fp_mmap(struct file *filep, struct vm_area_struct *vma) {
     unsigned long req_size = vma->vm_end - vma->vm_start;
     unsigned long off   = 0;
@@ -207,7 +220,8 @@ static int fp_mmap(struct file *filep, struct vm_area_struct *vma) {
         return -EINVAL;
     }
     // vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-    vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
+    //vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
+    vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
     while (off < req_size) {
         struct page *p;
         int ret;
@@ -662,7 +676,8 @@ static int __init agile_kernel_init(void) {
     }
 
     // 3. Create a device class
-    kernel_class = class_create(THIS_MODULE, CLASS_NAME);
+    //kernel_class = class_create(THIS_MODULE, CLASS_NAME);
+    kernel_class = class_create(CLASS_NAME);
     if (IS_ERR(kernel_class)) {
         cdev_del(&kernel_cdev);
         unregister_chrdev_region(dev_num, 1);
