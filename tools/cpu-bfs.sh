@@ -1,5 +1,5 @@
 #!/bin/bash
-datasets=/home/zhuoping/workspace/git/gapbs/bfs-graph
+datasets=/home/ub-12-3/san/bam/gapbs/benchmark/graphs/bfs-graph
 
 for i in ${datasets}/u/*
 do

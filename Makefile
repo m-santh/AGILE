@@ -1,8 +1,6 @@
 NVCC_FLAG :=  -w -Xptxas -v \
- 				-arch=native	
-
-# 
-# -gencode=arch=compute_89,code=sm_89 \
+ 				-arch=native \
+ -gencode=arch=compute_86,code=sm_86 \
 -G -lineinfo
 
 

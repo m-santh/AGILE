@@ -21,12 +21,19 @@
 #include "agile_nvme_driver.h"
 
 
-#define CQ_ALIGN 64 // for 4K alignment, if 16 is used then the cq depth should be 256
+#define CQ_ALIGN 4096 // for 4K alignment, if 16 is used then the cq depth should be 256
+#define SQE_BYTES 64
+#define CQE_BYTES 16
+
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define AGILE_NVME_GET_BAR_SIZE _IOR('N', 1, size_t)
 #define CPU_MEM_SIZE 68719476736L
 #define CPU_MEM_ADDR 0x2000000000L
 #define CPU_PAGE_SIZE 65536 // align with GPU
+
+    static inline uint64_t align_up(uint64_t x, uint64_t a) {
+        return (x + a - 1) & ~(a - 1);
+    }
 
 class NvmeConfig {
 public:
@@ -181,11 +188,15 @@ public:
         printf("setQueueNums %d\n", queue_num);
         volatile unsigned int * cmd = sq_ptr + asq_pos * 16;
 
+        // clear 16 dwords (64 bytes)
+        for (int i = 0; i < 16; i++) cmd[i] = 0;
+
         cmd[0] = 0x09 | (asq_pos << 16);
         cmd[10] = 0x7;
         cmd[11] = ((queue_num - 1) << 16) | (queue_num - 1);
         asq_pos = (asq_pos + 1) % this->admin_q_depth;
         *admin_sqdb = asq_pos;
+        //std::cout << __LINE__ << " Admin NVMe SQE: " << std::hex << cmd[0] << " " << cmd[10] << " " << cmd[11] << std::dec << std::endl;
         this->wait_cpl();
     }
 
@@ -237,9 +248,17 @@ public:
     //     this->cpu_dma_size = cpu_dma_size;
     // }
 
-    __host__ unsigned int getRequiredMemSize(){
-        return queue_num * queue_depth * (64 + CQ_ALIGN); // TODO: check if CQ slot size can be 16
+    __host__ uint64_t getRequiredMemSize() {
+
+        uint64_t sq_bytes = align_up((uint64_t)queue_depth * SQE_BYTES, CQ_ALIGN);
+        uint64_t cq_bytes = align_up((uint64_t)queue_depth * CQE_BYTES, CQ_ALIGN);
+
+        return (uint64_t)queue_num * (sq_bytes + cq_bytes);
     }
+
+   // __host__ unsigned int getRequiredMemSize(){
+   //     return queue_num * queue_depth * (64 + CQ_ALIGN); // TODO: check if CQ slot size can be 16
+    //}
 
     __host__ volatile unsigned int * getSQDB(unsigned int idx){
         return SQ_DBL(this->bar, idx + 1, this->CAP_DSTRD);
@@ -255,13 +274,14 @@ public:
             // std::cout << "wait_cpl: " << std::hex << cpl[0] << " " << cpl[1] << " " << cpl[2] << " " << cpl[3] << std::dec << std::endl;
             // usleep(1000);
         }
+        //std::cout << "Admin NVMe CPL: " << std::hex << cpl[0] << " " << cpl[1] << " " << cpl[2] << " " << cpl[3] << std::dec << std::endl;
         if(((cpl[3] >> 17) & 0x1) != 0){
             std::cout << "Admin NVMe CPL: " << std::hex << cpl[0] << " " << cpl[1] << " " << cpl[2] << " " << cpl[3] << std::dec << std::endl;
         }
 
         // std::cout << "Admin NVMe CPL: " << std::hex << cpl[0] << " " << cpl[1] << " " << cpl[2] << " " << cpl[3] << std::dec << std::endl;
         if(((cpl[3] >> 17) & 0x1) != 0){
-            exit(0);
+            exit(1);
         }
 
         acq_pos++;
@@ -301,6 +321,9 @@ public:
         // deleteQueue(idx);
         volatile unsigned int * cmd = sq_ptr + asq_pos * 16;
 
+        // clear 16 dwords (64 bytes)
+        for (int i = 0; i < 16; i++) cmd[i] = 0;
+
         cmd[0] = 0x5 | (asq_pos << 16);
         cmd[6] = cq_phy_addr & 0xffffffff;
         cmd[7] = (cq_phy_addr >> 32) & 0xffffffff;
@@ -308,8 +331,12 @@ public:
         cmd[11] = 0x1; 
         asq_pos = (asq_pos + 1) % this->admin_q_depth;
         *admin_sqdb = asq_pos;
+        //std::cout << __LINE__ << " Admin NVMe SQE: " << std::hex << cmd[0] << " " << cmd[10] << " " << cmd[11] << std::dec << std::endl;
         this->wait_cpl();
 
+
+        // clear 16 dwords (64 bytes)
+        for (int i = 0; i < 16; i++) cmd[i] = 0;
 
         // register sq
         cmd = sq_ptr + asq_pos * 16;
@@ -320,6 +347,7 @@ public:
         cmd[11] = 0x1 | (idx + 1) << 16;
         asq_pos = (asq_pos + 1) % this->admin_q_depth;
         *admin_sqdb = asq_pos;
+        //std::cout << "Admin NVMe SQE: " << std::hex << cmd[0] << " " << cmd[10] << " " << cmd[11] << std::dec << std::endl;
         this->wait_cpl();
 
         for(unsigned int i = 0; i < this->queue_depth; ++i){
@@ -642,7 +670,7 @@ public:
 
     __host__ void initializeAgile(){
         // allocate memory
-        std::cout << "allocating GPU pinned memory\n";
+        std::cout << "allocating GPU pinned memory size=0x" << std::hex << this->getGPUPinnedMemSize() << std::dec << std::endl;
         unsigned long gpu_physical_addr = allocateGPUPinedMem(this->gpu_device_idx, this->getGPUPinnedMemSize(), this->d_gpu_ptr, this->h_gpu_ptr);
         
         // std::cout << "allocating CPU pinned memory\n";
@@ -679,8 +707,21 @@ public:
             this->h_dev[dev_id] = AgileNvmeDev(nvme_dev[i].queue_num, nvme_dev[i].queue_depth);
             this->h_dev[dev_id].pairs = (AgileQueuePair *) malloc(sizeof(AgileQueuePair) * nvme_dev[i].queue_num);
             for(int j = 0; j < nvme_dev[i].queue_num; ++j){
-                unsigned long sq_offset = gpu_offset;
-                unsigned long cq_offset = sq_offset + 64 * nvme_dev[i].queue_depth;
+
+                // 1) compute sizes for this queue
+                uint64_t sq_bytes = align_up((uint64_t)nvme_dev[i].queue_depth * SQE_BYTES, CQ_ALIGN);
+                uint64_t cq_bytes = align_up((uint64_t)nvme_dev[i].queue_depth * CQE_BYTES, CQ_ALIGN);
+
+                // 2) place SQ at aligned offset
+                gpu_offset = align_up(gpu_offset, CQ_ALIGN);
+                uint64_t sq_offset = gpu_offset;
+
+                // 3) place CQ at next aligned offset (after SQ)
+                gpu_offset = align_up(gpu_offset + sq_bytes, CQ_ALIGN);
+                uint64_t cq_offset = gpu_offset;
+
+                //unsigned long sq_offset = gpu_offset;
+                //unsigned long cq_offset = sq_offset + 64 * nvme_dev[i].queue_depth;
 
                 volatile unsigned int *sqdb = nvme_dev[i].getSQDB(j);
                 volatile unsigned int *csqb = nvme_dev[i].getCQDB(j);
@@ -692,12 +733,14 @@ public:
                 AgileQueuePair temp_pairs(((void*)this->d_gpu_ptr) + sq_offset, ((void*)this->d_gpu_ptr) + cq_offset, sqdb, csqb, nvme_dev[i].queue_depth, nvme_dev[i].ssd_blk_offset * this->block_size / 512);
 #endif
 
-
-                nvme_dev[i].registerQueue(j, gpu_physical_addr + gpu_offset, gpu_physical_addr + cq_offset, (unsigned int *)(this->h_gpu_ptr + gpu_offset), (unsigned int *)(this->h_gpu_ptr + cq_offset));
+                nvme_dev[i].registerQueue(j, gpu_physical_addr + sq_offset, gpu_physical_addr + cq_offset, (unsigned int *)(this->h_gpu_ptr + sq_offset), (unsigned int *)(this->h_gpu_ptr + cq_offset));
                 
                 h_dev[dev_id].pairs[j] = temp_pairs;
                 this->h_pollingList->pairs[queue_id] = temp_pairs;
-                gpu_offset += (64 + CQ_ALIGN) * nvme_dev[i].queue_depth; // TODO: auto alignment
+                //gpu_offset += (64 + CQ_ALIGN) * nvme_dev[i].queue_depth; // TODO: auto alignment
+                // 4) advance for next queue pair
+                gpu_offset = cq_offset + cq_bytes;
+
                 queue_id++;
             }
 
@@ -737,7 +780,9 @@ public:
         this->h_logger = ((AgileLogger *) ((void *)this->h_gpu_ptr + gpu_offset));
 #endif
         cuda_err_chk(cudaMemcpy(d_dev, h_dev, sizeof(AgileNvmeDev) * this->nvme_dev.size(), cudaMemcpyHostToDevice));
-        cuda_err_chk(cudaMallocManaged(&(this->h_ctrl->stop_signal), sizeof(unsigned int)));
+        cuda_err_chk(cudaHostAlloc(&(this->h_ctrl->stop_signal), sizeof(unsigned int), cudaHostAllocMapped | cudaHostAllocPortable));
+        unsigned int* d_stop_signal = nullptr;
+        cuda_err_chk(cudaHostGetDevicePointer(&this->h_ctrl->d_stop_signal, this->h_ctrl->stop_signal, 0));
         this->h_ctrl->dev = d_dev;
         this->h_ctrl->list = this->d_pollingList;
         this->h_hierarchy->gpu_cache = this->d_gpu_cache;
@@ -805,7 +850,8 @@ public:
 
     [[deprecated]]
     __host__ void addNvmeDev(std::string dev, unsigned int bar_size, SSDBLK_TYPE block_offset, unsigned int queue_num, unsigned int queue_depth){
-        this->nvme_dev.emplace_back(dev, bar_size, queue_num, queue_depth, block_offset);
+        //this->nvme_dev.emplace_back(dev, bar_size, queue_num, queue_depth, block_offset);
+        this->nvme_dev.emplace_back(dev, block_offset, queue_num, queue_depth);
     }
 
     __host__ void addNvmeDev(std::string dev, SSDBLK_TYPE block_offset, unsigned int queue_num, unsigned int queue_depth){
@@ -821,7 +867,7 @@ public:
         // calculate memory size for cache
 
 #if ENABLE_LOGGING
-        unsigned int required_pinned_gpu_mem_size = this->h_gpu_cache->getRequiredMemSize() + sizeof(AgileLogger);
+        unsigned int required_pinned_gpu_mem_size = this->h_gpu_cache->getRequiredMemSize() + sizeof(AgileLogger)*2;
 #else
         unsigned int required_pinned_gpu_mem_size = this->h_gpu_cache->getRequiredMemSize();
 #endif
@@ -849,13 +895,22 @@ public:
 
 #if ENABLE_LOGGING
     __host__ void monitoring(){
+        printf("GPU d_ptr          = %p\n", (void*)this->d_gpu_ptr);   // CUDA device ptr
+        printf("CPU map base h_ptr = %p\n", (void*)this->h_gpu_ptr);   // from gdr_map translation
+        printf("h_logger           = %p\n", (void*)this->h_logger);
+        fflush(stdout);
+        printf("function %s line %d\n", __FUNCTION__, __LINE__);
         std::cout << "run: " << this->run << " prefetch_hit: " << this->h_logger->prefetch_hit << " prefetch_relaxed_hit: " << this->h_logger->prefetch_relaxed_hit << " prefetch_relaxed_miss: " << this->h_logger->prefetch_relaxed_miss << " prefetch_issue: " << this->h_logger->prefetch_issue << " runtime_issue: " << this->h_logger->runtime_issue << " warp_master_wait: " << this->h_logger->warp_master_wait << std::endl;
+        printf("function %s line %d\n", __FUNCTION__, __LINE__);
         std::cout << "issued_read: " << this->h_logger->issued_read << " issued_write: " << this->h_logger->issued_write << " attempt_fail: " << this->h_logger->attempt_fail << std::endl;
         std::cout << "finished_read: " << this->h_logger->finished_read << " diff: " << this->h_logger->issued_read - this->h_logger->finished_read << " finished_write: " << this->h_logger->finished_write << std::endl;
+        printf("function %s line %d\n", __FUNCTION__, __LINE__);
         std::cout << "find_new_cacheline: " << this->h_logger->find_new_cacheline << " gpu_cache_hit: " << this->h_logger->gpu_cache_hit << " gpu2cpu: " << this->h_logger->gpu2cpu << " gpu_cache_miss: " << this->h_logger->gpu_cache_miss << " gpu_cache_evict: " << this->h_logger->gpu_cache_evict << std::endl;
+        printf("function %s line %d\n", __FUNCTION__, __LINE__);
         std::cout << "cpu_cache_hit: " << this->h_logger->cpu_cache_hit << " cpu2buf: " << this->h_logger->cpu2buf << " cpu2gpu: " << this->h_logger->cpu2gpu << " cpu_cache_miss: " << this->h_logger->cpu_cache_miss << " cpu_cache_evict: " << this->h_logger->cpu_cache_evict << std::endl;
         std::cout << "finished_block: " << this->h_logger->finished_block << " finished_agile_warp: " << this->h_logger->finished_agile_warp << std::endl;
         std::cout << "service: " << this->h_logger->service << " wait buffer: " << this->h_logger->wating_buffer << " finish buffer: " << this->h_logger->finish_buffer << " local hit: " << this->h_logger->buffer_localhit << std::endl;
+        printf("function %s line %d\n", __FUNCTION__, __LINE__);
         std::cout << "waiting: " << this->h_logger->waiting << " waitTooMany: " << this->h_logger->waitTooMany << " deadlock_check: " << this->h_logger->deadlock_check << std::endl;
         std::cout << "propogate_time: " << this->h_logger->propogate_time << " appendbuf_count: " << this->h_logger->appendbuf_count << " propogate_count: " << this->h_logger->propogate_count << " self_propagate: " << this->h_logger->self_propagate << std::endl;
         std::cout << "push in table: " << this->h_logger->push_in_table << " pop out table count: " << this->h_logger->pop_in_table << std::endl;
@@ -873,30 +928,38 @@ public:
         // unsigned int stop = 0;
         // cuda_err_chk(cudaMemcpy(agile_stop_signal, &stop, sizeof(unsigned int), cudaMemcpyHostToDevice));
         cuda_err_chk(cudaStreamCreateWithFlags(&(this->agile_cq), cudaStreamNonBlocking));
-        *((volatile unsigned int*)this->h_ctrl->stop_signal) = 0;
+        //*((volatile unsigned int*)this->h_ctrl->stop_signal) = 0;
+        *reinterpret_cast<volatile unsigned int*>(this->h_ctrl->stop_signal) = 0;
         unsigned int warps = this->total_pairs;
         unsigned int threads = warps * 32;
-        unsigned int blocks = threads / 1024 + (threads % 1024 == 0 ? 0 : 1);
+        unsigned int blocks = threads / 256 + (threads % 256 == 0 ? 0 : 1);
         std::cout << "agile blocks: " << blocks << " threads: " << threads << std::endl;
-        start_agile_cq_service<<<blocks, min(threads, 1024), 0, this->agile_cq>>>(this->d_ctrl);
+        start_agile_cq_service<<<blocks, min(threads, 256), 0, this->agile_cq>>>(this->d_ctrl);
         usleep(100);
     }
     
     __host__ void startAgile(unsigned int griddim, unsigned int blockdim){
         cuda_err_chk(cudaStreamCreateWithFlags(&(this->agile_cq), cudaStreamNonBlocking));
-        *((volatile unsigned int*)this->h_ctrl->stop_signal) = 0;
+        //*((volatile unsigned int*)this->h_ctrl->stop_signal) = 0;
+        *reinterpret_cast<volatile unsigned int*>(this->h_ctrl->stop_signal) = 0;
         std::cout << "agile blocks: " << griddim << " threads: " << blockdim << std::endl;
         start_agile_cq_service<<<griddim, blockdim, 0, this->agile_cq>>>(this->d_ctrl);
         usleep(100);
 
     }
     __host__ void stopAgile(){
-        *((volatile unsigned int*)this->h_ctrl->stop_signal) = 1;
+        //*((volatile unsigned int*)this->h_ctrl->stop_signal) = 1;
+        *reinterpret_cast<volatile unsigned int*>(this->h_ctrl->stop_signal) = 1;
+        //_sync_synchronize();
+        printf("after stop signal line %d\n", __LINE__);
         cuda_err_chk(cudaStreamSynchronize(this->agile_cq));
-        cuda_err_chk(cudaStreamDestroy(this->agile_cq));
+        printf("after stop signal line %d\n", __LINE__);
 #if ENABLE_LOGGING
         this->monitoring();
 #endif
+        printf("after stop signal\n");
+        cuda_err_chk(cudaStreamDestroy(this->agile_cq));
+        printf("after stop signal line %d\n", __LINE__);
     }
 
 

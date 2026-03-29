@@ -35,29 +35,40 @@ int main(int argc, char ** argv){
     CPU_CACHE_IMPL c_cache(0, cfg.slot_size); // Disable CPU cache
     SHARE_TABLE_IMPL w_table(cfg.gpu_slot_num / 4); 
     GPU_CACHE_IMPL g_cache(cfg.gpu_slot_num, cfg.slot_size, cfg.ssd_block_num);
+    printf("line %d\n", __LINE__);
 
     host.setGPUCache(g_cache);
     host.setCPUCache(c_cache);
     host.setShareTable(w_table);
 
+    printf("line %d\n", __LINE__);
     host.addNvmeDev(cfg.nvme_device, cfg.ssd_blk_offset, cfg.queue_num, cfg.queue_depth);
+    printf("line %d\n", __LINE__);
     host.initNvme();
+    printf("line %d\n", __LINE__);
 
     host.initializeAgile();
+    printf("line %d\n", __LINE__);
 
-    host.queryOccupancy(gpu_kernel, 1024, 0);
+    host.queryOccupancy(gpu_kernel, 256, 0);
+    printf("line %d\n", __LINE__);
 
     host.startAgile();
 
     cudaStream_t krnl_stream;
     cudaStreamCreate(&krnl_stream);
+    printf("line %d\n", __LINE__);
 
-    gpu_kernel<<<1, 1024, 0, krnl_stream>>>(host.getAgileCtrlDevicePtr(), 8);
+    gpu_kernel<<<1, 256, 0, krnl_stream>>>(host.getAgileCtrlDevicePtr(), 8);
+    printf("line %d\n", __LINE__);
     
     cuda_err_chk(cudaStreamSynchronize(krnl_stream));
+    printf("line %d\n", __LINE__);
     cuda_err_chk(cudaStreamDestroy(krnl_stream));
+    printf("line %d\n", __LINE__);
 
     host.stopAgile();
+    printf("line %d\n", __LINE__);
     host.closeNvme();
     return 0;
 }

@@ -1,5 +1,5 @@
 #!/bin/bash
-datasets=/mnt/nvme/zhuoping/gapbs/pr-graph/g3
+datasets=/home/ub-12-3/san/bam/gapbs/benchmark/graphs/pr-graph/g3
 
 size=512
 

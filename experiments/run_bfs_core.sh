@@ -1,6 +1,6 @@
 #!/bin/bash
 
-datasets=/home/zhuoping/workspace/git/gapbs/bfs-graph/g
+datasets=/home/ub-12-3/san/bam/gapbs/benchmark/graphs/bfs-graph/g
 bam=baseline/bam/build/bin
 
 nvme_blk_size=8

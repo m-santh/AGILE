@@ -1,6 +1,6 @@
 #!/bin/bash
 
-datasets=/home/zhuoping/workspace/git/gapbs/bfs-graph/u
+datasets=/home/ub-12-3/san/bam/gapbs/benchmark/graphs/bfs-graph/g
 bam=baseline/bam/build/bin
 
 

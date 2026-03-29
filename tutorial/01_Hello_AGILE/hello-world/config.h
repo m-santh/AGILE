@@ -135,7 +135,7 @@ public:
 
         // parallelism config
         items.push_back(new ConfigItem<unsigned int>("block_dim", "-bd", 32, "Block dimension", block_dim));
-        items.push_back(new ConfigItem<unsigned int>("thread_dim", "-td", 1024, "Thread dimension", thread_dim));
+        items.push_back(new ConfigItem<unsigned int>("thread_dim", "-td", 256, "Thread dimension", thread_dim));
         items.push_back(new ConfigItem<unsigned int>("agile_dim", "-ad", 1, "Agile dimension", agile_dim));
     
         // application config

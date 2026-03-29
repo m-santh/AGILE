@@ -187,7 +187,8 @@ __device__ bool AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::waitCpl(u
             this->list->pairs[queue_idx].cq.phase = ~(this->list->pairs[queue_idx].cq.phase) & 0x1;
         }
         if(((entry3 >> 17) & 0x1) != 0){ // error happens
-            printf("find nvme error: %.8x %.8x %.8x %.8x\n", cpl[0], cpl[1], cpl[2], cpl[3]);
+            //printf("find nvme error: %.8x %.8x %.8x %.8x\n", cpl[0], cpl[1], cpl[2], cpl[3]);
+            printf("line: %d find nvme error: %.8x %.8x %.8x %.8x\n", __LINE__, cpl[0], cpl[1], cpl[2], cpl[3]);
         }
         unsigned int cid = (entry3 & 0x0000ffff);
         unsigned int sq_identifier = entry2 >> 16;
@@ -202,7 +203,7 @@ __device__ bool AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::waitCpl(u
         unsigned int blocks = cmd_ptr[12] + 1;
         unsigned int device_type = (cmd_ptr[13] >> 8) & 0x1; // TODO: check if this works
 
-        // printf("qidx %d pos: %d phyaddrL %lx type: %d cid %d ssd_blk_idx: %d \n", queue_idx, cid, phy_addr, cmd_type, cid, ssd_blk_idx);
+         printf("qidx %d pos: %d phyaddrL %lx type: %d cid %d ssd_blk_idx: %d \n", queue_idx, cid, phy_addr, cmd_type, cid, ssd_blk_idx);
         // release the command slot
         wati_status(this->list->pairs[queue_idx].sq.cmd_status + cid, AGILE_CMD_STATUS_ISSUED, AGILE_CMD_STATUS_EMPTY);
         __threadfence_system();
@@ -297,7 +298,7 @@ __device__ void AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::pollingSe
         unsigned int mask = __ballot_sync(0xFFFFFFFF, 1);
         bool valid = this->warpService(AGILE_BID, start_idx, end_idx);
 
-    } while (*((volatile unsigned int *)this->stop_signal) == 0);
+    } while (*reinterpret_cast<volatile unsigned int*>(this->d_stop_signal) == 0);
     // if(threadIdx.x % 32 == 0){
     //     LOGGING(atomicAdd(&(logger->finished_agile_warp), 1));
     // }
@@ -320,7 +321,7 @@ __device__ unsigned int AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::w
     unsigned int entry2 = cpl[2];
     unsigned int entry3 = cpl[3];
     if(((entry3 >> 17) & 0x1) != 0){ // error happens
-        printf("find nvme error: %.8x %.8x %.8x %.8x\n", cpl[0], cpl[1], cpl[2], cpl[3]);
+        printf("line: %d find nvme error: %.8x %.8x %.8x %.8x\n", __LINE__, cpl[0], cpl[1], cpl[2], cpl[3]);
     }
 
 
@@ -328,14 +329,32 @@ __device__ unsigned int AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::w
     unsigned int sq_identifier = entry2 >> 16;
     unsigned int sq_head_pointer = (entry2 & 0xffff);
 
+
+    // Decode NVMe status field from DW3[31:16]
+    uint16_t st   = (uint16_t)(entry3 >> 16);
+    uint8_t  sc   = (uint8_t)((st >> 1) & 0xFF);   // Status Code
+    uint8_t  sct  = (uint8_t)((st >> 9) & 0x7);    // Status Code Type
+    uint8_t  dnr  = (uint8_t)((st >> 15) & 0x1);   // Do Not Retry flag
+
     volatile unsigned int * cmd_ptr = (volatile unsigned int *) this->list->pairs[queue_idx].sq.data + 16 * cid;
-    unsigned int cmd_type = cmd_ptr[0] & 0x7f;
+    unsigned int cmd_type = cmd_ptr[0] & 0xff;
+    uint16_t cmd_cid   = (uint16_t)(cmd_ptr[0] >> 16) & 0xffff;
     unsigned long phy_addr = cmd_ptr[6];
     phy_addr |= ((unsigned long)cmd_ptr[7]) << 32;
+    unsigned long prp2 = cmd_ptr[8];
+    prp2 |= ((unsigned long)cmd_ptr[9]) << 32;
     unsigned int ssd_blk_idx = cmd_ptr[10];
     unsigned int blocks = cmd_ptr[12] + 1;
     unsigned int device_type = (cmd_ptr[13] >> 8) & 0x1; // TODO: check if this works
 
+
+    printf("NVMe CPL ERR q=%u sqid=%u sqhd=%u cid=%u (cmd_cid=%u) sct=%u sc=0x%02x dnr=%u | CPL=[%08x %08x %08x %08x] SQE opc=0x%02x cdw10=%08x cdw11=%08x nlb=%u prp1=%016llx prp2=%016llx\n",
+               queue_idx, sq_identifier, sq_head_pointer, cid, cmd_cid, sct, sc, dnr,
+               cpl[0], cpl[1], entry2, entry3,
+               cmd_type, ssd_blk_idx, cmd_ptr[11], blocks,
+               (unsigned long long)phy_addr, (unsigned long long)prp2);
+
+    printf("qidx2 %d pos: %d phyaddrL %lx prp2 %lx type: %d cid %d ssd_blk_idx: %d \n", queue_idx, cid, phy_addr, prp2, cmd_type, cid, ssd_blk_idx);
     wati_status(this->list->pairs[queue_idx].sq.cmd_status + cid, AGILE_CMD_STATUS_ISSUED, AGILE_CMD_STATUS_EMPTY);
     __threadfence_system();
     this->list->pairs[queue_idx].sq.cmd_locks[cid].remoteRelease();
@@ -403,7 +422,8 @@ __device__ void AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::pollingSe
         unsigned int mask = __ballot_sync(0xFFFFFFFF, 1);
         bool valid = this->warpService2(warp_id, warp_idx, this->list->pairs[queue_idx].cq.pos_offset, this->list->pairs[queue_idx].cq.mask); // change queue idx in the future
         if(warp_idx == 0){
-            stop_sig = *((volatile unsigned int *)this->stop_signal);
+            //stop_sig = *((volatile unsigned int *)this->stop_signal);
+            stop_sig = *reinterpret_cast<volatile unsigned int*>(this->d_stop_signal);
         }
         stop_sig = __shfl_sync(0xFFFFFFFF, stop_sig, 0);
     } while (stop_sig == 0);
@@ -420,7 +440,8 @@ __device__ void AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::pollingSe
 //         unsigned int mask = __ballot_sync(0xFFFFFFFF, 1);
 //         bool valid = this->warpService2(warp_id, warp_idx, this->list->pairs[queue_idx].cq.pos_offset, this->list->pairs[queue_idx].cq.mask); // change queue idx in the future
 //         if(warp_idx == 0){
-//             stop_sig = *((volatile unsigned int *)this->stop_signal);
+//             //stop_sig = *((volatile unsigned int *)this->stop_signal);
+//             stop_sig = *reinterpret_cast<volatile unsigned int*>(this->d_stop_signal);
 //         }
 //         stop_sig = __shfl_sync(0xFFFFFFFF, stop_sig, 0);
 //     } while (stop_sig == 0);
@@ -904,7 +925,7 @@ __device__ const T AgileArrReadWrapIdx<GPUCacheImpl, CPUCacheImpl, ShareTableImp
         LOGGING(atomicAdd(&(logger->buffer_localhit), 1));
         return static_cast<T*>(this->buf->buf->data)[idx % (ctrl->buf_size / sizeof(T))];
     }else{
-        // printf("read miss, dev_id: %d, blk_idx: %d\n", dev_id, blk_idx);
+         printf("read miss, dev_id: %d, blk_idx: %d buf %lu\n", dev_id, blk_idx, this->buf);
         this->buf->resetStatus();
         this->buf->setSelfTag(dev_id, blk_idx);
         ctrl->asyncRead(dev_id, blk_idx, this->buf, chain);

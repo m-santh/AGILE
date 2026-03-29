@@ -51,7 +51,7 @@ unsigned long allocateGPUPinedMem(int device_idx, unsigned int mem_size, CUdevic
     gpu_mem_handle_t mhandle;
 
     // CUdeviceptr d_ptr; // exposed GPU memory pointer
-    long long int *table; // exposed GPU memory physical addresses table
+    long long int *table = NULL; // exposed GPU memory physical addresses table
     gpu_memalloc_fn_t galloc_fn = gpu_mem_alloc;
     ASSERTDRV(cuInit(0));
     int n_devices = 0;
@@ -89,16 +89,23 @@ unsigned long allocateGPUPinedMem(int device_idx, unsigned int mem_size, CUdevic
     gdr_pin_buffer_table(g, d_ptr, mem_size, 0, 0, &mh, &table_size, &table);
 
     ASSERT_NEQ(mh, null_mh);
+    ASSERT_NEQ(table, NULL);
+    std::cout << "table addr: " << std::hex << table << std::dec << std::endl;
     std::cout << "physical address: " << std::hex << (table)[0] << std::dec << std::endl;
     std::cout << "physical continue: " << check_continue(table_size, table) << std::endl;
     std::cout << "table size: " << table_size << std::endl;
 
-    ASSERT_EQ(gdr_map(g, mh, &map_d_ptr, mem_size), 0);
     gdr_info_t info;
     ASSERT_EQ(gdr_get_info(g, mh, &info), 0);
-    int off = info.va - d_ptr;
+    //int off = d_ptr - info.va; // - d_ptr;
+    ptrdiff_t off = (ptrdiff_t)((uintptr_t)d_ptr - (uintptr_t)info.va);
+    size_t need = (size_t)off + mem_size;
+    ASSERT_EQ(gdr_map(g, mh, &map_d_ptr, need), 0);
     h_ptr = (void *)((char *)map_d_ptr + off);
-    return table[0];
+    printf("offset = %lu map_d_ptr 0x%x h_ptr=0x%x\n", off, map_d_ptr, h_ptr);
+    long long int tableaddr = table[0]; 
+    free(table);
+    return tableaddr;
 }
 
 unsigned long allocateCPUPinedMem(int fd, void *& h_ptr, unsigned int mem_size) {

@@ -125,6 +125,7 @@ public:
 
     // unsigned int finished_polling;
     unsigned int *stop_signal;
+    unsigned int *d_stop_signal;
 
 
 

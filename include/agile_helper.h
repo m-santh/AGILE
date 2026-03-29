@@ -27,7 +27,7 @@
 
 #define FAKE_NVME 0
 
-#define cuda_err_chk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+#define cuda_err_chk(ans) { gpuAssert((ans), __FILE__, __LINE__, true); }
 
 #if ENABLE_LOGGING
     __device__ AgileLogger * logger;

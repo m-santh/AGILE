@@ -1,7 +1,7 @@
-NVCC_FLAG :=  -w -Xptxas -v \
+NVCC_FLAG :=  -g -w -Xptxas -v \
  				-arch=native
 
-AGILE_PATH := /home/zhuoping/workspace/AGILE
+AGILE_PATH ?= /home/zhuoping/workspace/AGILE
 
 INCLUDE_PATH := -I$(AGILE_PATH)/include \
 				-I$(AGILE_PATH)/driver/gdrcopy/include \
