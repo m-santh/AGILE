@@ -348,6 +348,7 @@ __device__ unsigned int AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::w
     unsigned int device_type = (cmd_ptr[13] >> 8) & 0x1; // TODO: check if this works
 
 
+#if 0
     printf("NVMe CPL ERR q=%u sqid=%u sqhd=%u cid=%u (cmd_cid=%u) sct=%u sc=0x%02x dnr=%u | CPL=[%08x %08x %08x %08x] SQE opc=0x%02x cdw10=%08x cdw11=%08x nlb=%u prp1=%016llx prp2=%016llx\n",
                queue_idx, sq_identifier, sq_head_pointer, cid, cmd_cid, sct, sc, dnr,
                cpl[0], cpl[1], entry2, entry3,
@@ -355,6 +356,7 @@ __device__ unsigned int AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::w
                (unsigned long long)phy_addr, (unsigned long long)prp2);
 
     printf("qidx2 %d pos: %d phyaddrL %lx prp2 %lx type: %d cid %d ssd_blk_idx: %d \n", queue_idx, cid, phy_addr, prp2, cmd_type, cid, ssd_blk_idx);
+#endif
     wati_status(this->list->pairs[queue_idx].sq.cmd_status + cid, AGILE_CMD_STATUS_ISSUED, AGILE_CMD_STATUS_EMPTY);
     __threadfence_system();
     this->list->pairs[queue_idx].sq.cmd_locks[cid].remoteRelease();
@@ -492,6 +494,10 @@ __device__ unsigned int AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::p
     bool gpu_hit = this->getGPUCacheBasePtr()->checkCacheHitAcquireLock_lockStart(dev_idx, ssd_blk_idx, &gpu_cache_idx, &chain);
     if(gpu_hit){
         LOGGING(atomicAdd(&(logger->gpu_cache_hit), 1));
+        // Increment the access counter for this slot
+        atomicAdd(&this->getGPUCacheBasePtr()->slot_access_count[gpu_cache_idx], 1);
+        log_cache_event(EVENT_HIT, ssd_blk_idx, gpu_cache_idx);
+
         this->getGPUCacheBasePtr()->releaseSlotLock_lockEnd(dev_idx, ssd_blk_idx, gpu_cache_idx, &chain);
         return gpu_cache_idx;
     }
@@ -510,6 +516,8 @@ __device__ unsigned int AgileCtrl<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>::p
 
     LOGGING(atomicAdd(&(logger->cpu_cache_miss), 1));
     LOGGING(atomicAdd(&(logger->gpu_cache_miss), 1));
+
+    log_cache_event(EVENT_MISS, ssd_blk_idx, 0xFFFFFFFF);
 
     this->getCPUCacheBasePtr()->releaseSlotLock_lockEnd(dev_idx, ssd_blk_idx, cpu_cache_idx, &chain);
     this->getGPUCacheBasePtr()->processingReading_inLockArea(gpu_cache_idx);

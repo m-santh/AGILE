@@ -11,6 +11,39 @@
 template <typename GPUCacheImpl, typename CPUCacheImpl, typename ShareTableImpl>
 class AgileCtrl;
 
+// Define event types
+enum TraceEventType {
+    EVENT_HIT = 0,
+    EVENT_MISS = 1,
+    EVENT_EVICT = 2,
+    EVENT_DEAD = 3
+};
+
+// Define the record structure
+struct AccessTraceRecord {
+    unsigned int event_type;
+    unsigned long long timestamp;
+    unsigned int ssd_blk_idx;
+    unsigned int gpu_cache_idx;
+};
+
+// Global device pointers for the trace buffer
+__device__ AccessTraceRecord* d_trace_buffer;
+__device__ unsigned int* d_trace_counter;
+__device__ unsigned int MAX_TRACE_RECORDS = 50000000; // 50 million events
+
+// Fast inline logger function
+__device__ inline void log_cache_event(TraceEventType type, unsigned int ssd_blk, unsigned int cache_idx) {
+    unsigned int idx = atomicAdd(d_trace_counter, 1);
+    if (idx < MAX_TRACE_RECORDS) {
+        d_trace_buffer[idx].event_type = type;
+        // clock64() returns the exact GPU hardware cycle counter
+        d_trace_buffer[idx].timestamp = clock64();
+        d_trace_buffer[idx].ssd_blk_idx = ssd_blk;
+        d_trace_buffer[idx].gpu_cache_idx = cache_idx;
+    }
+}
+
 class AgileCacheHierarchyBase;
 
 /**
@@ -25,6 +58,7 @@ public:
     
     unsigned int slot_num;
     unsigned int slot_size; // how many uint32
+    unsigned int* slot_access_count;
 
     __host__ AgileCacheBase(unsigned int slot_num, unsigned int slot_size, char type[5]);
 
@@ -220,6 +254,10 @@ class GPUCacheBase : public GPUCacheBase_T {
 public:
 
     __host__ GPUCacheBase(unsigned int slot_num, unsigned int slot_size);
+     //Be sure to cudaMalloc this in the constructor:
+     //GPUCacheBase_T(slot_num, slot_size);
+     //cudaMalloc(&this->slot_access_count, slot_num * sizeof(unsigned int));
+   //}
 
 
     // __device__ void markWrite(NVME_DEV_IDX_TYPE ssd_dev_idx, SSDBLK_TYPE ssd_blk_idx, AgileBufPtr * bufPtr, AgileLockChain * chain){

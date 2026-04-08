@@ -34,6 +34,18 @@ __device__ bool AgileCacheHierarchy<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>:
 
     bool succ = false;
     if(stat == AGILE_GPUCACHE_READY){ 
+        // --- INSTRUMENTATION START ---
+        unsigned int accesses = this->getGPUCacheBasePtr()->slot_access_count[gpu_cache_idx];
+
+        // If it was fetched but never read, it's a dead page
+        if (accesses == 0) {
+            log_cache_event(EVENT_DEAD, ssd_blk_idx, gpu_cache_idx);
+        }
+
+        // Always log the eviction
+        log_cache_event(EVENT_EVICT, ssd_blk_idx, gpu_cache_idx);
+        // --- INSTRUMENTATION END ---
+
         LOGGING(atomicAdd(&(logger->gpu_cache_evict), 1));
         unsigned int old_stat = atomicCAS(&(this->getGPUCacheBasePtr()->cache_status[gpu_cache_idx]), AGILE_GPUCACHE_READY, AGILE_GPUCACHE_EMPTY);
         if(old_stat != AGILE_GPUCACHE_READY){
@@ -57,6 +69,18 @@ __device__ bool AgileCacheHierarchy<GPUCacheImpl, CPUCacheImpl, ShareTableImpl>:
             LOGGING(atomicAdd(&(logger->gpu2nvme), 1));
             this->evictGPU2Nvme_inLockArea(ssd_dev_idx, ssd_blk_idx, gpu_cache_idx, chain);
             // this->getGPUCacheBasePtr()->processingWriting_inLockArea(gpu_cache_idx);
+
+            // --- INSTRUMENTATION START ---
+            unsigned int accesses = this->getGPUCacheBasePtr()->slot_access_count[gpu_cache_idx];
+
+            // If it was fetched but never read, it's a dead page
+            if (accesses == 0) {
+                log_cache_event(EVENT_DEAD, ssd_blk_idx, gpu_cache_idx);
+            }
+
+            // Always log the eviction
+            log_cache_event(EVENT_EVICT, ssd_blk_idx, gpu_cache_idx);
+            // --- INSTRUMENTATION END ---
         }
     } else {
         // GPU_ASSERT(false, "status error");

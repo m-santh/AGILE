@@ -1,8 +1,11 @@
-NVCC_FLAG :=  -w -Xptxas -v \
+#NVCC_FLAG :=  -w -Xptxas -v \
  				-arch=native \
- -gencode=arch=compute_86,code=sm_86 \
+ --default-stream per-thread -gencode=arch=compute_86,code=compute_86 \
 -G -lineinfo
 
+NVCC_FLAG := -O2 -lineinfo --default-stream per-thread \
+  -gencode arch=compute_86,code=sm_86 \
+  -gencode arch=compute_86,code=compute_86
 
 INCLUDE_PATH := -I./include \
 				-I./driver/gdrcopy/include \
@@ -10,7 +13,7 @@ INCLUDE_PATH := -I./include \
 				
 LIB_PATH := -L./driver/gdrcopy/src
 
-LIBS := -lcuda -lgdrapi -lcublas
+LIBS := -lcuda -lgdrapi -lcublas -lcufile
 
 bench-write:
 	clear
@@ -70,4 +73,8 @@ pr:
 ctc-block:
 	clear
 	nvcc $(NVCC_FLAG) $(INCLUDE_PATH) benchmarks/async-block-ctc/main.cu common/common.cpp $(LIB_PATH) $(LIBS) -o ./bin/ctc-block
+
+app-bench:
+	clear
+	nvcc $(NVCC_FLAG) $(INCLUDE_PATH) benchmarks/app-bench/main.cu common/common.cpp $(LIB_PATH) $(LIBS) -o ./bin/app-bench
 

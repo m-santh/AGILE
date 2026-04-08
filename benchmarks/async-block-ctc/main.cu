@@ -171,7 +171,7 @@ int main(int argc, char ** argv){
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &numBlocksPerSM4,
         resetCache,
-        1024, // threads per block
+        256, // threads per block
         0    // dynamic shared memory
     );
 
@@ -183,11 +183,13 @@ int main(int argc, char ** argv){
     std::cout << "block dim: " << cfg.block_dim << " thread dim: " << cfg.thread_dim << std::endl;
     host.startAgile();
 
+    std::cout << "before ctc_async_kernel\n" << std::endl;
 
     start1 = std::chrono::high_resolution_clock::now();
     host.runKernel(ctc_async_kernel, ctrl, buf1, buf2, cfg.buf_per_blk, cfg.compute_sim, cfg.compute_itr, cfg.block_dim * cfg.thread_dim, cfg.iteration, cfg.enable_load, cfg.enable_compute);
     end1 = std::chrono::high_resolution_clock::now();
 
+    std::cout << "after ctc_async_kernel\n" << std::endl;
     std::cout << "reset cache\n";
     host.runKernel(resetCache, ctrl, buf0, cfg.buf_per_blk, cfg.block_dim * cfg.thread_dim);
 

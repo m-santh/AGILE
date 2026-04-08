@@ -53,6 +53,19 @@ int main(int argc, char ** argv){
     host.addNvmeDev(cfg.nvme_bar, cfg.bar_size, cfg.ssd_blk_offset, cfg.queue_num, cfg.queue_depth);
     host.initNvme();
 
+    // Logs
+    AccessTraceRecord* h_trace_buffer;
+    unsigned int* h_trace_counter;
+
+    // Allocate Unified Memory so both CPU and GPU can access it
+    cudaMallocManaged(&h_trace_buffer, 50000000 * sizeof(AccessTraceRecord));
+    cudaMallocManaged(&h_trace_counter, sizeof(unsigned int));
+    *h_trace_counter = 0;
+
+    // Copy pointers to device symbols
+    cudaMemcpyToSymbol(d_trace_buffer, &h_trace_buffer, sizeof(AccessTraceRecord*));
+    cudaMemcpyToSymbol(d_trace_counter, &h_trace_counter, sizeof(unsigned int*));
+
     unsigned int * d_changed, changed = 0;
     unsigned int * d_offsets, * d_node_levels, * h_offsets, * h_node_levels;
     cuda_err_chk(cudaMalloc(&d_changed, sizeof(unsigned int)));
@@ -82,7 +95,7 @@ int main(int argc, char ** argv){
 
     uint64_t numblocks, numthreads, vertex_count;
     vertex_count = cfg.node_num;
-    numthreads = 1024;
+    numthreads = 256;
     unsigned int blockDim = vertex_count / numthreads + 1;
 
     host.configParallelism(blockDim, numthreads, cfg.agile_dim);
@@ -91,7 +104,7 @@ int main(int argc, char ** argv){
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &numBlocksPerSM3,
         start_agile_cq_service<GPU_CACHE_IMPL, CPU_CACHE_IMPL, SHARE_TABLE_IMPL>,
-        1024, // threads per block
+        256, // threads per block
         0    // dynamic shared memory
     );
 
@@ -99,7 +112,7 @@ int main(int argc, char ** argv){
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &numBlocksPerSM4,
         bfs_kernel,
-        1024, // threads per block
+        256, // threads per block
         0    // dynamic shared memory
     );
 
@@ -134,6 +147,22 @@ int main(int argc, char ** argv){
     std::cout << "BFS time: " << total_itr_time << " seconds." << std::endl;
     cuda_err_chk(cudaMemcpy(h_node_levels, d_node_levels, cfg.node_num * sizeof(unsigned int), cudaMemcpyDeviceToHost));
     
+    // Back in your host code, after cudaDeviceSynchronize():
+
+    std::ofstream outfile("cache_trace.csv");
+    outfile << "Timestamp,EventType,SSD_Block_Idx,GPU_Cache_Idx\n";
+
+    unsigned int total_events = *h_trace_counter;
+    if (total_events > 50000000) total_events = 50000000; // Cap at max
+
+    for (unsigned int i = 0; i < total_events; ++i) {
+        outfile << h_trace_buffer[i].timestamp << ","
+                << h_trace_buffer[i].event_type << ","
+                << h_trace_buffer[i].ssd_blk_idx << ","
+                << h_trace_buffer[i].gpu_cache_idx << "\n";
+    }
+    outfile.close();
+
     remove(cfg.output_file.c_str());
     std::ofstream ofs(cfg.output_file, std::ios::out | std::ios::binary);
     for(unsigned int i = 0; i < cfg.node_num; i++){

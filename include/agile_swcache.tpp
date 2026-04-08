@@ -60,6 +60,9 @@ __host__ GPUCacheBase_T::GPUCacheBase_T(unsigned int slot_num, unsigned int slot
     cuda_err_chk(cudaMalloc(&(this->cache_status), sizeof(unsigned int) * slot_num));
     cuda_err_chk(cudaMalloc(&(this->bufChain), sizeof(AgileBuf *) * slot_num));
     cuda_err_chk(cudaMalloc(&(this->cache_ref), sizeof(unsigned int) * slot_num));
+    // ADD YOUR INSTRUMENTATION ALLOCATION HERE:
+    cuda_err_chk(cudaMalloc(&(this->slot_access_count), slot_num * sizeof(unsigned int)));
+    cuda_err_chk(cudaMemset(this->slot_access_count, 0, slot_num * sizeof(unsigned int)));
 }
 
 __host__ GPUCacheBase_T::~GPUCacheBase_T(){
